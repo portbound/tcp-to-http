@@ -39,6 +39,7 @@ func (r *Request) parse(data []byte) (int, error) {
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	buf := make([]byte, bufferSize, bufferSize)
+	cr := []byte{'\r', '\n'}
 	readToIndex := 0
 	req := Request{
 		State: stateinit,
@@ -59,30 +60,30 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			}
 			return nil, err
 		}
-
 		readToIndex += bytesRead
 
-		bytesParsed, err := req.parse(buf[:readToIndex])
+		if !bytes.Contains(buf, cr) {
+			continue
+		}
+
+		eol := bytes.Index(buf, cr)
+
+		_, err = req.parse(buf[:eol])
 		if err != nil {
 			return nil, err
 		}
 
-		copy(buf, buf[bytesParsed:readToIndex])
-		readToIndex -= bytesParsed
+		copy(buf, buf[(eol+len(cr)):readToIndex])
+		readToIndex -= eol + len(cr)
 	}
 	return &req, nil
 }
 
 func parseRequestLine(r *Request, data []byte) (int, error) {
-	if !bytes.Contains(data, []byte{'\r', '\n'}) {
-		return 0, nil
-	}
-
-	data = bytes.TrimSuffix(data, []byte{'\r', '\n'})
 	fields := strings.Split(string(data), " ")
 
 	if len(fields) != 3 {
-		return 0, fmt.Errorf("invalid Request Line. Expected 3 parts, got %d", len(fields))
+		return 0, fmt.Errorf("invalid Request Line. Expected 3 parts, got %d, %v", len(fields), fields)
 	}
 
 	if fields[2] != "HTTP/1.1" {
