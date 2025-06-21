@@ -20,7 +20,7 @@ const (
 
 type Request struct {
 	RequestLine RequestLine
-	Header      headers.Headers
+	Headers     headers.Headers
 	State       int
 }
 type RequestLine struct {
@@ -29,15 +29,21 @@ type RequestLine struct {
 	Method        string
 }
 
-func (r *Request) parse(line []byte) (int, error) {
+func (r *Request) parse(buf []byte) (int, error) {
 	if r.State == stateParsingRequestLine {
-		return parseRequestLine(r, line)
+		return parseRequestLine(r, buf)
 	}
+	if r.State == stateParsingHeaders {
+		bytesParsed, done, err := r.Headers.Parse(buf)
+		if err != nil {
+			return 0, err
+		}
 
-	if r.State == stateDone {
-		return 0, fmt.Errorf("error: trying to read data in a done state")
+		if done {
+			r.State = stateDone
+		}
+		return bytesParsed, nil
 	}
-
 	return 0, fmt.Errorf("error: unknown state")
 }
 
@@ -46,10 +52,11 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	crlf := []byte{'\r', '\n'}
 	index := 0
 	req := Request{
-		State: stateParsingRequestLine,
+		Headers: make(headers.Headers),
+		State:   stateParsingRequestLine,
 	}
 
-	for req.State == stateParsingRequestLine {
+	for req.State != stateDone {
 		if index == cap(buf) {
 			tmp := make([]byte, cap(buf)*2)
 			copy(tmp, buf[:index])
@@ -60,7 +67,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				req.State = 1
-				break
+				return nil, err
 			}
 			return nil, err
 		}
@@ -70,61 +77,26 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			continue
 		}
 
-		lineEnd := bytes.Index(buf, crlf)
-		line := buf[:lineEnd]
-
-		_, err = req.parse(line)
+		bytesParsed, err := req.parse(buf)
 		if err != nil {
 			return nil, err
 		}
 
-		copy(buf, buf[(lineEnd+len(crlf)):index])
-		index -= lineEnd + len(crlf)
+		tmp := make([]byte, len(buf))
+		copy(tmp, buf[bytesParsed:index])
+		buf = tmp
 
-		req.State = stateParsingHeaders
+		index -= bytesParsed
 	}
-
-	for req.State == stateParsingHeaders {
-		fmt.Println("here")
-		headers := make(headers.Headers)
-
-		bytesRead, err := reader.Read(buf[index:])
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				req.State = 1
-				break
-			}
-			return nil, err
-		}
-		index += bytesRead
-
-		if !bytes.Contains(buf, crlf) {
-			continue
-		}
-
-		lineEnd := bytes.Index(buf, crlf)
-		line := buf[:lineEnd]
-
-		_, done, err := headers.Parse(line)
-		if err != nil {
-			return nil, err
-		}
-
-		if done == true {
-			req.Header = headers
-			req.State = stateDone
-		}
-		copy(buf, buf[(lineEnd+len(crlf)):index])
-		index -= lineEnd + len(crlf)
-
-	}
-
-	fmt.Printf("%v", &req)
 	return &req, nil
 }
 
-func parseRequestLine(r *Request, line []byte) (int, error) {
-	fields := strings.Split(string(line), " ")
+func parseRequestLine(r *Request, buf []byte) (int, error) {
+	crlf := []byte{'\r', '\n'}
+
+	lineEnd := bytes.Index(buf, crlf)
+	line := string(buf[:lineEnd])
+	fields := strings.Split(line, " ")
 
 	if len(fields) != 3 {
 		return 0, fmt.Errorf("invalid Request Line. Expected 3 parts, got %d, %v", len(fields), fields)
@@ -140,12 +112,12 @@ func parseRequestLine(r *Request, line []byte) (int, error) {
 		}
 	}
 
-	r.State = stateDone
 	r.RequestLine = RequestLine{
 		HttpVersion:   fields[2],
 		RequestTarget: fields[1],
 		Method:        fields[0],
 	}
 
-	return len(line), nil
+	r.State = stateParsingHeaders
+	return len(line) + len(crlf), nil
 }

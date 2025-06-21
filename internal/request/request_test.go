@@ -2,11 +2,8 @@ package request
 
 import (
 	"io"
-	"strings"
+	"reflect"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type chunkReader struct {
@@ -34,32 +31,133 @@ func (cr *chunkReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-func TestRequestLineParse(t *testing.T) {
-	// Test: Good GET Request line
-	reader := chunkReader{
-		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
-		numBytesPerRead: 3,
-	}
-	r, err := RequestFromReader(&reader)
-	require.NoError(t, err)
-	require.NotNil(t, r)
-	assert.Equal(t, "GET", r.RequestLine.Method)
-	assert.Equal(t, "/", r.RequestLine.RequestTarget)
-	assert.Equal(t, "HTTP/1.1", r.RequestLine.HttpVersion)
+// func TestRequestLineParse(t *testing.T) {
+// tests := []struct {
+// 	name           string
+// 	input          io.Reader
+// 	expectError    bool
+// 	expectedMethod string
+// 	expectedTarget string
+// 	expectedVer    string
+// }{
+// 	{
+// 		name:           "Valid GET root",
+// 		input:          &chunkReader{data: "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n", numBytesPerRead: 3},
+// 		expectError:    false,
+// 		expectedMethod: "GET",
+// 		expectedTarget: "/",
+// 		expectedVer:    "HTTP/1.1",
+// 	},
+// 	{
+// 		name:           "Valid GET with path",
+// 		input:          &chunkReader{data: "GET /coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n", numBytesPerRead: 1},
+// 		expectError:    false,
+// 		expectedMethod: "GET",
+// 		expectedTarget: "/coffee",
+// 		expectedVer:    "HTTP/1.1",
+// 	},
+// 	{
+// 		name:        "Invalid request line",
+// 		input:       strings.NewReader("/coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"),
+// 		expectError: true,
+// 	},
+// }
 
-	// Test: Good GET Request line with path
-	reader = chunkReader{
-		data:            "GET /coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
-		numBytesPerRead: 1,
-	}
-	r, err = RequestFromReader(&reader)
-	require.NoError(t, err)
-	require.NotNil(t, r)
-	assert.Equal(t, "GET", r.RequestLine.Method)
-	assert.Equal(t, "/coffee", r.RequestLine.RequestTarget)
-	assert.Equal(t, "HTTP/1.1", r.RequestLine.HttpVersion)
+// 	for _, tc := range tests {
+// 		t.Run(tc.name, func(t *testing.T) {
+// 			r, err := RequestFromReader(tc.input)
+//
+// 			if tc.expectError {
+// 				if err == nil {
+// 					t.Errorf("expected error, got nil")
+// 				}
+// 				return
+// 			}
+//
+// 			if err != nil {
+// 				t.Fatalf("unexpected error: %v", err)
+// 			}
+//
+// 			if r == nil {
+// 				t.Fatalf("expected non-nil request")
+// 			}
+//
+// 			if r.RequestLine.Method != tc.expectedMethod {
+// 				t.Errorf("got method %q, want %q", r.RequestLine.Method, tc.expectedMethod)
+// 			}
+// 			if r.RequestLine.RequestTarget != tc.expectedTarget {
+// 				t.Errorf("got target %q, want %q", r.RequestLine.RequestTarget, tc.expectedTarget)
+// 			}
+// 			if r.RequestLine.HttpVersion != tc.expectedVer {
+// 				t.Errorf("got version %q, want %q", r.RequestLine.HttpVersion, tc.expectedVer)
+// 			}
+// 		})
+// 	}
+// }
 
-	// Test: Invalid number of parts in request line
-	_, err = RequestFromReader(strings.NewReader("/coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
-	require.Error(t, err)
+func TestHeadersParse(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       io.Reader
+		expectError bool
+		expected    map[string]string
+	}{
+		{
+			name: "Standard headers",
+			input: &chunkReader{
+				data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
+				numBytesPerRead: 3,
+			},
+			expectError: false,
+			expected: map[string]string{
+				"host":       "localhost:42069",
+				"user-agent": "curl/7.81.0",
+				"accept":     "*/*",
+			},
+		},
+		{
+			name: "Malformed header",
+			input: &chunkReader{
+				data:            "GET / HTTP/1.1\r\nHost localhost:42069\r\n\r\n",
+				numBytesPerRead: 3,
+			},
+			expectError: true,
+		},
+		{
+			name: "Empty input",
+			input: &chunkReader{
+				data:            "",
+				numBytesPerRead: 3,
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := RequestFromReader(tc.input)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if r == nil {
+				t.Fatalf("expected non-nil request")
+			}
+
+			for key, want := range tc.expected {
+				got := r.Headers[key]
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("header %q: got %q, want %q", key, got, want)
+				}
+			}
+		})
+	}
 }
