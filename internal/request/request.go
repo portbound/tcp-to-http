@@ -71,7 +71,6 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 					if req.State == stateDone {
 						break
 					}
-					req.State = 2
 					return nil, err
 				}
 				return nil, err
