@@ -63,23 +63,32 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			buf = tmp
 		}
 
-		bytesRead, err := reader.Read(buf[index:])
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				req.State = 1
+		// If the buffer is empty, or if we don't have a crlf, read
+		if index == 0 || !bytes.Contains(buf, crlf) {
+			bytesRead, err := reader.Read(buf[index:])
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					if req.State == stateDone {
+						break
+					}
+					req.State = 2
+					return nil, err
+				}
 				return nil, err
 			}
-			return nil, err
-		}
-		index += bytesRead
-
-		if !bytes.Contains(buf, crlf) {
-			continue
+			index += bytesRead
+			if !bytes.Contains(buf, crlf) {
+				continue
+			}
 		}
 
 		bytesParsed, err := req.parse(buf)
 		if err != nil {
 			return nil, err
+		}
+
+		if req.State == stateDone {
+			break
 		}
 
 		tmp := make([]byte, len(buf))
