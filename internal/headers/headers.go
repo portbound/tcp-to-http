@@ -8,6 +8,14 @@ import (
 
 type Headers map[string]string
 
+func (h Headers) Get(key string) string {
+	val, ok := h[strings.ToLower(key)]
+	if !ok {
+		return ""
+	}
+	return val
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	crlf := []byte{'\r', '\n'}
 
@@ -37,7 +45,6 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	fieldName = strings.ToLower(fieldName)
 	fieldValue := string(bytes.TrimSpace(line[colon+1:]))
 
-	// h[fieldName] = append(h[fieldName], fieldValue)
 	value, ok := h[fieldName]
 	if ok {
 		h[fieldName] = fmt.Sprintf("%s, %s", value, fieldValue)
