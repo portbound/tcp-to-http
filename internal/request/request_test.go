@@ -197,6 +197,43 @@ func TestBodyParse(t *testing.T) {
 			expectError:           true,
 			expectedContentLength: 20,
 		},
+		{
+			name: "Empty body content length 0",
+			input: &chunkReader{
+				data: "POST /submit HTTP/1.1\r\n" +
+					"Host: localhost:42069\r\n" +
+					"Content-Length: 0\r\n" +
+					"\r\n" +
+					"",
+				numBytesPerRead: 8,
+			},
+			expectError:           false,
+			expectedContentLength: 0,
+		},
+		{
+			name: "Empty body no content length",
+			input: &chunkReader{
+				data: "POST /submit HTTP/1.1\r\n" +
+					"Host: localhost:42069\r\n" +
+					"\r\n" +
+					"",
+				numBytesPerRead: 8,
+			},
+			expectError:           false,
+			expectedContentLength: 0,
+		},
+		{
+			name: "No content length but body exists",
+			input: &chunkReader{
+				data: "POST /submit HTTP/1.1\r\n" +
+					"Host: localhost:42069\r\n" +
+					"\r\n" +
+					"here is a body that shouldn't be read",
+				numBytesPerRead: 8,
+			},
+			expectError:           false,
+			expectedContentLength: 0,
+		},
 	}
 
 	for _, tc := range tests {
