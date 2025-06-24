@@ -162,3 +162,69 @@ func TestHeadersParse(t *testing.T) {
 		})
 	}
 }
+
+func TestBodyParse(t *testing.T) {
+	tests := []struct {
+		name                  string
+		input                 io.Reader
+		expectError           bool
+		expectedContentLength int
+		expectedBody          string
+	}{
+		{
+			name: "Standard Body",
+			input: &chunkReader{
+				data: "POST /submit HTTP/1.1\r\n" +
+					"Host: localhost:42069\r\n" +
+					"Content-Length: 13\r\n" +
+					"\r\n" +
+					"hello world!\n",
+				numBytesPerRead: 3,
+			},
+			expectedContentLength: 13,
+			expectedBody:          "hello world!\n",
+		},
+		{
+			name: "Body shorter than reported content length",
+			input: &chunkReader{
+				data: "POST /submit HTTP/1.1\r\n" +
+					"Host: localhost:42069\r\n" +
+					"Content-Length: 20\r\n" +
+					"\r\n" +
+					"partial content",
+				numBytesPerRead: 3,
+			},
+			expectError:           true,
+			expectedContentLength: 20,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := RequestFromReader(tc.input)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if r == nil {
+				t.Fatalf("expected non-nil request")
+			}
+
+			if !reflect.DeepEqual(string(r.Body), tc.expectedBody) {
+				t.Errorf("got body %q, want %q", string(r.Body), tc.expectedBody)
+			}
+
+			if len(r.Body) != tc.expectedContentLength {
+				t.Errorf("got content length %q, want %q", r.Body, tc.expectedContentLength)
+			}
+		})
+	}
+}

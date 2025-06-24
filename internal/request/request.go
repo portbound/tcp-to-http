@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -15,36 +16,21 @@ const bufferSize = 8
 const (
 	stateParsingRequestLine = iota
 	stateParsingHeaders
+	stateParsingBody
 	stateDone
 )
 
 type Request struct {
-	RequestLine RequestLine
-	Headers     headers.Headers
-	State       int
+	RequestLine   RequestLine
+	Headers       headers.Headers
+	Body          []byte
+	ContentLength int
+	State         int
 }
 type RequestLine struct {
 	HttpVersion   string
 	RequestTarget string
 	Method        string
-}
-
-func (r *Request) parse(buf []byte) (int, error) {
-	if r.State == stateParsingRequestLine {
-		return parseRequestLine(r, buf)
-	}
-	if r.State == stateParsingHeaders {
-		bytesParsed, done, err := r.Headers.Parse(buf)
-		if err != nil {
-			return 0, err
-		}
-
-		if done {
-			r.State = stateDone
-		}
-		return bytesParsed, nil
-	}
-	return 0, fmt.Errorf("error: unknown state")
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
@@ -64,7 +50,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		// If the buffer is empty, or if we don't have a crlf, read
-		if index == 0 || !bytes.Contains(buf, crlf) {
+		if index == 0 || !bytes.Contains(buf, []byte{'\n'}) {
 			bytesRead, err := reader.Read(buf[index:])
 			if err != nil {
 				if errors.Is(err, io.EOF) {
@@ -99,6 +85,51 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	return &req, nil
 }
 
+func (r *Request) parse(buf []byte) (int, error) {
+	if r.State == stateParsingRequestLine {
+		return parseRequestLine(r, buf)
+	}
+
+	if r.State == stateParsingHeaders {
+		bytesParsed, done, err := r.Headers.Parse(buf)
+		if err != nil {
+			return 0, err
+		}
+
+		if !done {
+			return bytesParsed, nil
+		}
+
+		if val := r.Headers.Get("Content-Length"); val != "" {
+			r.State = stateParsingBody
+			r.ContentLength, err = strconv.Atoi(val)
+			if err != nil {
+				return bytesParsed, err
+			}
+			return bytesParsed, nil
+		}
+
+		r.State = stateDone
+		return bytesParsed, nil
+	}
+
+	if r.State == stateParsingBody {
+		value := r.Headers.Get("Content-Length")
+
+		contentLen, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, err
+		}
+
+		bytesParsed, err := parseBody(r, buf, contentLen)
+		if err != nil {
+			return 0, err
+		}
+		return bytesParsed, nil
+	}
+	return 0, fmt.Errorf("error: unknown state")
+}
+
 func parseRequestLine(r *Request, buf []byte) (int, error) {
 	crlf := []byte{'\r', '\n'}
 
@@ -128,4 +159,19 @@ func parseRequestLine(r *Request, buf []byte) (int, error) {
 
 	r.State = stateParsingHeaders
 	return len(line) + len(crlf), nil
+}
+
+func parseBody(r *Request, buf []byte, contentLen int) (int, error) {
+	for _, b := range buf {
+		if b != byte(0) {
+			r.Body = append(r.Body, b)
+		}
+	}
+
+	if len(r.Body) != contentLen {
+		return 0, fmt.Errorf("error: length of body %q does not match specified content length %q", len(r.Body), contentLen)
+	}
+
+	r.State = stateDone
+	return contentLen, nil
 }
