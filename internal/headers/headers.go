@@ -11,6 +11,9 @@ type Headers map[string]string
 func (h Headers) Get(key string) string {
 	val, ok := h[strings.ToLower(key)]
 	if !ok {
+		if key == "Content-Length" {
+			return "0"
+		}
 		return ""
 	}
 	return val
