@@ -43,14 +43,15 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	}
 
 	for req.State != stateDone {
-		if index == cap(buf) {
-			tmp := make([]byte, cap(buf)*2)
-			copy(tmp, buf[:index])
-			buf = tmp
-		}
+		// FIXME: instead of trying to check conditions here, we should probably just fire off the read in a goroutine. If there's content to be read, we can read it, but the main thread will not be blocked, so now is a great time to slow down and explore concurrency in Go - we can probably leverage go routines and channels with the select statement to read if there's content available and continue the loop otherwise?
 
-		// If the buffer is empty, or if we don't have a crlf, read
 		if index == 0 || !bytes.Contains(buf, []byte{'\n'}) {
+			if index == cap(buf) {
+				tmp := make([]byte, cap(buf)*2)
+				copy(tmp, buf[:index])
+				buf = tmp
+			}
+
 			bytesRead, err := reader.Read(buf[index:])
 			if err != nil {
 				if errors.Is(err, io.EOF) {
@@ -61,10 +62,12 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 				}
 				return nil, err
 			}
+
 			index += bytesRead
-			if !bytes.Contains(buf, crlf) {
-				continue
-			}
+		}
+
+		if !bytes.Contains(buf, crlf) {
+			continue
 		}
 
 		bytesParsed, err := req.parse(buf)
@@ -100,7 +103,7 @@ func (r *Request) parse(buf []byte) (int, error) {
 			return bytesParsed, nil
 		}
 
-		if val := r.Headers.Get("Content-Length"); val != "" {
+		if val := r.Headers.Get("Content-Length"); val != "0" {
 			r.State = stateParsingBody
 			r.ContentLength, err = strconv.Atoi(val)
 			if err != nil {
