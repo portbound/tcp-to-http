@@ -2,7 +2,6 @@ package request
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -33,41 +32,61 @@ type RequestLine struct {
 	Method        string
 }
 
+type ReadResult struct {
+	Data      []byte
+	BytesRead int
+	Err       error
+}
+
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	buf := make([]byte, bufferSize, bufferSize)
+	dataChan := make(chan ReadResult)
+	buf := make([]byte, 0, bufferSize)
 	crlf := []byte{'\r', '\n'}
-	index := 0
 	req := Request{
 		Headers: make(headers.Headers),
 		State:   stateParsingRequestLine,
 	}
 
-	for req.State != stateDone {
-		// FIXME: instead of trying to check conditions here, we should probably just fire off the read in a goroutine. If there's content to be read, we can read it, but the main thread will not be blocked, so now is a great time to slow down and explore concurrency in Go - we can probably leverage go routines and channels with the select statement to read if there's content available and continue the loop otherwise?
-
-		if index == 0 || !bytes.Contains(buf, []byte{'\n'}) {
-			if index == cap(buf) {
-				tmp := make([]byte, cap(buf)*2)
-				copy(tmp, buf[:index])
-				buf = tmp
+	go func() {
+		for {
+			buf := make([]byte, bufferSize)
+			n, err := reader.Read(buf)
+			dataChan <- ReadResult{
+				Data:      buf[:n],
+				BytesRead: n,
+				Err:       err,
 			}
-
-			bytesRead, err := reader.Read(buf[index:])
 			if err != nil {
-				if errors.Is(err, io.EOF) {
-					if req.State == stateDone {
-						break
-					}
-					return nil, err
-				}
-				return nil, err
+				close(dataChan)
+				return
 			}
+		}
+	}()
 
-			index += bytesRead
+	for req.State != stateDone {
+		stream, ok := <-dataChan
+		if !ok {
+			return nil, io.EOF
 		}
 
-		if !bytes.Contains(buf, crlf) {
-			continue
+		if len(buf)+stream.BytesRead > cap(buf) {
+			tmp := make([]byte, 0, cap(buf)*2)
+			tmp = append(tmp, buf...)
+			buf = tmp
+		}
+
+		buf = append(buf, stream.Data[:stream.BytesRead]...)
+
+		if req.State == stateParsingRequestLine || req.State == stateParsingHeaders {
+			if !bytes.Contains(buf, crlf) {
+				continue
+			}
+		}
+
+		if req.State == stateParsingBody {
+			if len(buf) != req.ContentLength {
+				continue
+			}
 		}
 
 		bytesParsed, err := req.parse(buf)
@@ -79,12 +98,11 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			break
 		}
 
-		tmp := make([]byte, len(buf))
-		copy(tmp, buf[bytesParsed:index])
+		tmp := make([]byte, 0, len(buf))
+		tmp = append(tmp, buf[bytesParsed:]...)
 		buf = tmp
-
-		index -= bytesParsed
 	}
+
 	return &req, nil
 }
 
