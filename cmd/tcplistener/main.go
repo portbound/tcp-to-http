@@ -38,6 +38,6 @@ func main() {
 		}
 
 		fmt.Println("Body:")
-		fmt.Println(req.Body)
+		fmt.Println(string(req.Body))
 	}
 }
