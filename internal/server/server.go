@@ -2,13 +2,10 @@ package server
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
 	"sync/atomic"
 
-	"github.com/portbound/tcp-to-http/internal/request"
 	"github.com/portbound/tcp-to-http/internal/response"
 )
 
@@ -58,7 +55,7 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(port int, handler Handler) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, err
