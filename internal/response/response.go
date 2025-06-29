@@ -13,7 +13,7 @@ type StatusCode int
 const (
 	StatusOk                  StatusCode = 200
 	StatusBadRequest          StatusCode = 400
-	StatusInternalServerError            = 500
+	StatusInternalServerError StatusCode = 500
 )
 
 func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
